@@ -12,8 +12,8 @@ import os # 更改tensorflow的Log訊息的顯示模式
 # Make TensorFlow logs less verbose (減少不必要的訊息顯示)
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 count = 0
-pre_model_person = 0 
-pre_model_present = 0
+pre_model = 0 
+
 '''
 Step 1. Build Local Model (建立本地模型)
 '''
@@ -56,30 +56,28 @@ def CNN_Model(input_shape, number_classes):
   model = Model(inputs=input_tensor, outputs=outputs, name="mnist_model")
   return model
 def alpha_update(alpha,global_parameter,local_parameter,num_classes,input_shape,x_train,y_train):
+    print(np.array(x_train).shape)
+    print(type(x_train))
+    
     grad_alpha = 0
     alpha_n = 0.5
-    #create model
-    ipt = Input(input_shape)
-    out = layers.Conv2D(filters = 32, kernel_size=(3, 3), activation="relu",input_shape=input_shape)(ipt)
-    out = layers.MaxPooling2D(pool_size=(2, 2))(out)
-    out = layers.Conv2D(filters = 64, kernel_size=(3, 3), activation="relu")(out)
-    out = layers.MaxPooling2D(pool_size=(2, 2))(out)
-    out = layers.Flatten()(out)
-    out = layers.Dropout(0.5)(out)
-    out = layers.Dense(num_classes, activation="softmax")(out)
-    model = Model(ipt,out)
-    #set model parameter
-    model.set_weights(global_parameter)
-    #train data and label (add the batch size dim) 
-    x_train = tf.expand_dims(x_train,axis=0)
-    y_train = tf.expand_dims(y_train,axis=0)
-    #forward pass
+    ipt = Input((16,))
+    out = layers.Dense(16)(ipt)
+    model = Model(ipt, out)
+    model.compile('adam', 'mse')
+
+    x = y = tf.constant(np.random.randn(32, 16))
+    model.train_on_batch(x, y)
+
     with tf.GradientTape() as tape:
-        pred = model(x_train)
-        loss = tf.keras.losses.categorical_crossentropy(y_train,pred)
-    #get gradient
-    grad = tape.gradient(loss, model.trainable_variables)
-    #print(grad)
+    # Doing the computation in the context of the gradient tape
+    # For example computing loss
+        pred = model(x)
+        loss = tf.metrics.MSE(y,pred)
+
+# Getting the gradient of weight w.r.t loss
+    grad = tape.gradient(loss, model.trainable_weights)
+    print(grad)
     return alpha_n
 
 
@@ -133,27 +131,51 @@ class MnistClient(fl.client.NumPyClient):
 
     def fit(self, parameters, config):
         """Train parameters on the locally held training set."""
-        #count -> training round
-        #pre_model_person->previous round personalize layer
         global count
-        global pre_model_person
-        global pre_model_present
+        global pre_model
         # Update local model parameters
         self.model.set_weights(parameters)
-        n_test = alpha_update(0.5,self.model.get_weights(),self.model.get_weights(),10,(28,28,1),self.x_train[0],self.y_train[0])
-        
+        print(np.array(self.x_train[0]).shape)
+        print(np.array(self.y_train).shape)
+        n_test = alpha_update(0.5,self.model.get_weights(),self.model.get_weights(),10,(28,28,1),self.x_train[0],self.y_train[0][0])
+        print(n_test)
+        print("5555555555555555555555555555555555555555555555555555555555")
         # tet hyperparameters for this round
         batch_size: int = config["batch_size"]
         epochs: int = config["local_epochs"]
         print("batch_size{}  epoch{}".format(batch_size,epochs))
 
-        #return global model set personalize layer parameter        
+        #print the init model parameter
+        print("the thread{} training round{}".format(os.getpid(),count))
+        print("the init representation parameter \n")
+        print(self.model.layers[1].get_weights()[0][0][0][:])
+        print("the init personalize parameter2\n")
+        print(self.model.layers[-1].get_weights()[0][:])
         if(count==0):
-            pre_model_person = self.model.get_layer("personalize").get_weights()
-            pre_model_present = self.model.get_layer("representation").get_weights()
+            pre_model = self.model.get_layer("personalize").get_weights()
         if(count!=0):
-            self.model.get_layer("personalize").set_weights(pre_model_person)
-        #fix representation layer - > train personalize layer
+            self.model.get_layer("personalize").set_weights(pre_model)
+        #fix personalize layer
+        for layers in self.model.get_layer("representation").layers:
+            layers.trainable = True
+        for layers in self.model.get_layer("personalize").layers:
+            layers.trainable = False
+        self.model.compile("adam", "categorical_crossentropy", metrics=["accuracy"])
+        history = self.model.fit(
+            self.x_train,
+            self.y_train,
+            batch_size,
+            epochs,
+            validation_split=0.1,
+        )
+        #print the training(fix personalizr) model parameter
+        print("the after training(fix personalize)  parameter\n")
+        print(self.model.layers[1].get_weights()[0][0][0][:])
+        print("\n")
+        print("the after training(fix personalize)  parameter2\n")
+        print(self.model.layers[-1].get_weights()[0][:])
+           
+        #fix presentation layer
         for layers in self.model.get_layer("representation").layers:
             layers.trainable = False
         for layers in self.model.get_layer("personalize").layers:
@@ -170,26 +192,14 @@ class MnistClient(fl.client.NumPyClient):
             epochs,
             validation_split=0.1,
         )
-
-        #fix personalize layer -> train representation layer
-        for layers in self.model.get_layer("representation").layers:
-            layers.trainable = True
-        for layers in self.model.get_layer("personalize").layers:
-            layers.trainable = False
-        self.model.compile("adam", "categorical_crossentropy", metrics=["accuracy"])
-        history = self.model.fit(
-            self.x_train,
-            self.y_train,
-            batch_size,
-            epochs,
-            validation_split=0.1,
-        )
-                   
+        #print the training(fix presentation) model parameter
+        print("the after training(fix representation)  parameter\n")
+        print(self.model.layers[1].get_weights()[0][0][0][:])
+        print("\n")
+        print("the after training(fix representation)  parameter2\n")
+        print(self.model.layers[-1].get_weights()[0][:])
         count = count + 1
-        #save personaluze layer and representation layer (parameter)
-        pre_model_person = self.model.get_layer("personalize").get_weights()
-        pre_model_present = self.model.get_layer("representation").get_weights()
-
+        pre_model = self.model.get_layer("personalize").get_weights()
         # Return updated model parameters and results
         # 將訓練後的權重、資料集筆數、正確率/loss值等，回傳至server-side
         parameters_prime = self.model.get_weights()
