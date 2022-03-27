@@ -63,7 +63,7 @@ def main() -> None:
         fraction_fit=0.5, # 每一輪參與Training的Client比例
         fraction_eval=0.5, # 每一輪參與Evaluating的Client比例
         min_fit_clients=2, # 每一輪參與Training的最少Client連線數量 (與比例衝突時,以此為準)
-        min_eval_clients=1, # 每一輪參與Evaluating的最少Client連線數量 (與比例衝突時,以此為準)
+        min_eval_clients=2, # 每一輪參與Evaluating的最少Client連線數量 (與比例衝突時,以此為準)
         min_available_clients=2, # 啟動聯合學習之前，Client連線的最小數量
         
         on_fit_config_fn=fit_config, # 設定 Client-side Training Hyperparameter  
@@ -73,7 +73,7 @@ def main() -> None:
     )
 
     # Start Flower server for four rounds of federated learning
-    fl.server.start_server("localhost:8080", config={"num_rounds": 2}, strategy=strategy) #windows
+    fl.server.start_server("localhost:8080", config={"num_rounds": 4}, strategy=strategy) #windows
 
 '''
 [Model Hyperparameter](Client-side, train strategy)
@@ -129,6 +129,7 @@ def get_eval_fn(model):
     ) -> Optional[Tuple[float, Dict[str, fl.common.Scalar]]]:
         model.set_weights(weights)  # Update model with the latest parameters
         loss, accuracy = model.evaluate(x_val, y_val)
+        print("this is server acc:")
         return loss, {"accuracy": accuracy}
 
     return evaluate

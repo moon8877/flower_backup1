@@ -26,7 +26,7 @@ def CNN_Model(input_shape, number_classes):
   input_tensor = Input(shape=input_shape) # Input: convert normal numpy to Tensor (float32)
 
   # define layer connection
-  
+  # representation_model
   representation_model = models.Sequential([
       layers.Conv2D(filters = 32, kernel_size=(3, 3), activation="relu",input_shape=input_shape),
       layers.MaxPooling2D(pool_size=(2, 2)),
@@ -34,12 +34,8 @@ def CNN_Model(input_shape, number_classes):
       layers.MaxPooling2D(pool_size=(2, 2)),
       ])
   representation_model._name = "representation"
- # x = layers.Conv2D(filters = 32, kernel_size=(3, 3), activation="relu")(input_tensor)
- # x = layers.MaxPooling2D(pool_size=(2, 2))(x)
- # x = layers.Conv2D(filters = 64, kernel_size=(3, 3), activation="relu")(x)
- # x = layers.MaxPooling2D(pool_size=(2, 2))(x)
   x = representation_model(input_tensor)
-
+  #personalize_model
   personalize_model = models.Sequential([
       layers.Flatten(),
       layers.Dropout(0.5),
@@ -48,17 +44,46 @@ def CNN_Model(input_shape, number_classes):
   personalize_model._name = "personalize"
 
   outputs = personalize_model(x)
- # x = layers.Flatten()(x)
- # x = layers.Dropout(0.5)(x)
- # outputs = layers.Dense(number_classes, activation="softmax")(x)
 
   # define model
   model = Model(inputs=input_tensor, outputs=outputs, name="mnist_model")
   return model
-def alpha_update(alpha,global_parameter,local_parameter,num_classes,input_shape,x_train,y_train):
+def alpha_update(alpha,global_representation_parameter,local_representation_parameter,local_personalize_parameter,num_classes,input_shape,x_train,y_train):
     grad_alpha = 0
-    alpha_n = 0.5
+    alpha_n = 0
+    ipt = Input(input_shape)
+    #train data and label (add the batch size dim)
+    x_train = tf.expand_dims(x_train,axis=0)
+    y_train = tf.expand_dims(y_train,axis=0)
     #create model
+    representation_model = models.Sequential([
+        layers.Conv2D(filters = 32, kernel_size=(3, 3), activation="relu",input_shape=input_shape),
+        layers.MaxPooling2D(pool_size=(2, 2)),
+        layers.Conv2D(filters = 64, kernel_size=(3, 3), activation="relu"),
+        layers.MaxPooling2D(pool_size=(2, 2)),
+      ])
+    representation_model._name = "representation"
+    x = representation_model(ipt)
+    #personalize_model
+    personalize_model = models.Sequential([
+        layers.Flatten(),
+        layers.Dropout(0.5),
+        layers.Dense(num_classes, activation="softmax"),
+       ])
+    personalize_model._name = "personalize"
+    outputs = personalize_model(x)
+
+  # define model
+    model = Model(inputs=ipt, outputs=outputs)
+  #set global model parameter
+    model.get_layer("representation").set_weights(global_representation_parameter)
+    model.get_layer("personalize").set_weights(local_personalize_parameter)
+    for layer in model.get_layer("representation").layers:
+        layer.trainable = True
+    for layer in model.get_layer("personalize").layers:
+        layer.trainable = False
+    model.compile("adam", "categorical_crossentropy", metrics=["accuracy"])
+    '''
     ipt = Input(input_shape)
     out = layers.Conv2D(filters = 32, kernel_size=(3, 3), activation="relu",input_shape=input_shape)(ipt)
     out = layers.MaxPooling2D(pool_size=(2, 2))(out)
@@ -68,22 +93,42 @@ def alpha_update(alpha,global_parameter,local_parameter,num_classes,input_shape,
     out = layers.Dropout(0.5)(out)
     out = layers.Dense(num_classes, activation="softmax")(out)
     model = Model(ipt,out)
-    #set model parameter
-    model.set_weights(global_parameter)
-    #train data and label (add the batch size dim) 
-    x_train = tf.expand_dims(x_train,axis=0)
-    y_train = tf.expand_dims(y_train,axis=0)
+    '''
+   
     #forward pass
     with tf.GradientTape() as tape:
         pred = model(x_train)
         loss = tf.keras.losses.categorical_crossentropy(y_train,pred)
     #get gradient
-    grad = tape.gradient(loss, model.trainable_variables)
-    #print(grad)
-    return alpha_n
+    global_grad = tape.gradient(loss, model.trainable_variables)
+    
+    #set local model parameter
+    model.get_layer("representation").set_weights(local_representation_parameter)
+    model.get_layer("personalize").set_weights(local_personalize_parameter)
+    for layer in model.get_layer("representation").layers:
+        layer.trainable = True
+    for layer in model.get_layer("personalize").layers:
+        layer.trainable = False
+    model.compile("adam", "categorical_crossentropy", metrics=["accuracy"])
+    #forward pass
+    with tf.GradientTape() as tape:
+        pred = model(x_train)
+        loss = tf.keras.losses.categorical_crossentropy(y_train,pred)
+    #get gradient
+    local_grad = tape.gradient(loss, model.trainable_variables)
 
-
-
+    for i in range(len(local_grad)):
+        dif = global_representation_parameter[i]-local_representation_parameter[i]
+        grad = alpha*global_grad[i] + (1-alpha)*local_grad[i]
+        dif = tf.reshape(dif,-1)
+        grad = tf.reshape(grad,-1)
+        grad_alpha = grad_alpha + tf.tensordot(tf.transpose(dif),grad,1)
+    alpha = alpha - 0.5*grad_alpha
+    alpha = np.clip(np.array(alpha),0.0,1.0)
+    alpha = alpha.item()
+    print(alpha)
+    return_parameter = global_representation_parameter
+    return return_parameter
 
 '''
 Step 2. Load local dataset (引入本地端資料集)，對Dataset進行切割
@@ -138,10 +183,10 @@ class MnistClient(fl.client.NumPyClient):
         global count
         global pre_model_person
         global pre_model_present
+        global ada_model_present
         # Update local model parameters
         self.model.set_weights(parameters)
-        n_test = alpha_update(0.5,self.model.get_weights(),self.model.get_weights(),10,(28,28,1),self.x_train[0],self.y_train[0])
-        
+               
         # tet hyperparameters for this round
         batch_size: int = config["batch_size"]
         epochs: int = config["local_epochs"]
@@ -153,11 +198,13 @@ class MnistClient(fl.client.NumPyClient):
             pre_model_present = self.model.get_layer("representation").get_weights()
         if(count!=0):
             self.model.get_layer("personalize").set_weights(pre_model_person)
+            ada_model_present = alpha_update(0.5,self.model.get_layer("representation").get_weights(),pre_model_present,pre_model_person,10,(28,28,1),self.x_train[0],self.y_train[0])
+            self.model.get_layer("representation").set_weights(ada_model_present)
         #fix representation layer - > train personalize layer
-        for layers in self.model.get_layer("representation").layers:
-            layers.trainable = False
-        for layers in self.model.get_layer("personalize").layers:
-            layers.trainable = True
+        for layer in self.model.get_layer("representation").layers:
+            layer.trainable = False
+        for layer in self.model.get_layer("personalize").layers:
+            layer.trainable = True
         self.model.compile("adam", "categorical_crossentropy", metrics=["accuracy"])
 
         
@@ -172,10 +219,10 @@ class MnistClient(fl.client.NumPyClient):
         )
 
         #fix personalize layer -> train representation layer
-        for layers in self.model.get_layer("representation").layers:
-            layers.trainable = True
-        for layers in self.model.get_layer("personalize").layers:
-            layers.trainable = False
+        for layer in self.model.get_layer("representation").layers:
+            layer.trainable = True
+        for layer in self.model.get_layer("personalize").layers:
+            layer.trainable = False
         self.model.compile("adam", "categorical_crossentropy", metrics=["accuracy"])
         history = self.model.fit(
             self.x_train,
@@ -184,7 +231,8 @@ class MnistClient(fl.client.NumPyClient):
             epochs,
             validation_split=0.1,
         )
-                   
+        print("---------------------------")
+        print(self.model.get_weights()[1])
         count = count + 1
         #save personaluze layer and representation layer (parameter)
         pre_model_person = self.model.get_layer("personalize").get_weights()
@@ -208,7 +256,8 @@ class MnistClient(fl.client.NumPyClient):
 
         # Update local model with global parameters
         self.model.set_weights(parameters)
-
+        print("***************************")
+        print(self.model.get_weights()[1])
         # Get config values
         steps: int = config["val_steps"]
 
