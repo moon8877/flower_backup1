@@ -149,8 +149,8 @@ def load_partition(idx: int):
 
     sample_size = 60000 #x_train.shape[0]
     sample_size -= 5000 # Server-side 預留做驗證
-    training_size = int(sample_size/2)
-    testing_size = int(10000/2)
+    training_size = int(sample_size/3)
+    testing_size = int(10000/3)
 
     return ( 
         x_train[idx * training_size : (idx + 1) * training_size],
@@ -184,6 +184,7 @@ class MnistClient(fl.client.NumPyClient):
         global pre_model_person
         global pre_model_present
         global ada_model_present
+        print("client start {} time\n".format(count))
         # Update local model parameters
         self.model.set_weights(parameters)
                
@@ -207,7 +208,7 @@ class MnistClient(fl.client.NumPyClient):
             layer.trainable = True
         self.model.compile("adam", "categorical_crossentropy", metrics=["accuracy"])
 
-        
+        print("fix representation layer - > train personalize layer:acc")
         # Train the model using hyperparameters from config
         # (依 Server-side 的 hyperparameters 進行訓練)
         history = self.model.fit(
@@ -223,6 +224,7 @@ class MnistClient(fl.client.NumPyClient):
             layer.trainable = True
         for layer in self.model.get_layer("personalize").layers:
             layer.trainable = False
+        print("fix personalize layer -> train representation layer:acc")
         self.model.compile("adam", "categorical_crossentropy", metrics=["accuracy"])
         history = self.model.fit(
             self.x_train,
@@ -231,8 +233,7 @@ class MnistClient(fl.client.NumPyClient):
             epochs,
             validation_split=0.1,
         )
-        print("---------------------------")
-        print(self.model.get_weights()[1])
+        
         count = count + 1
         #save personaluze layer and representation layer (parameter)
         pre_model_person = self.model.get_layer("personalize").get_weights()
@@ -248,7 +249,9 @@ class MnistClient(fl.client.NumPyClient):
             "val_loss": history.history["val_loss"][-1],
             "val_accuracy": history.history["val_accuracy"][-1],
         }
-        print("return server")
+        print(" local model on test set")
+        loss, accuracy = self.model.evaluate(self.x_test, self.y_test)
+        print("local model test acc{}".format(accuracy))
         return parameters_prime, num_examples_train, results
 
     def evaluate(self, parameters, config):
@@ -256,8 +259,6 @@ class MnistClient(fl.client.NumPyClient):
 
         # Update local model with global parameters
         self.model.set_weights(parameters)
-        print("***************************")
-        print(self.model.get_weights()[1])
         # Get config values
         steps: int = config["val_steps"]
 
@@ -289,6 +290,5 @@ def main() -> None:
     fl.client.start_numpy_client("localhost:8080", client=client) # windows
 
 if __name__ == "__main__":
-    print("client start\n")
     main()
     print("client end\n")

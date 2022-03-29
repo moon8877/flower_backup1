@@ -63,8 +63,8 @@ def main() -> None:
         fraction_fit=0.5, # 每一輪參與Training的Client比例
         fraction_eval=0.5, # 每一輪參與Evaluating的Client比例
         min_fit_clients=2, # 每一輪參與Training的最少Client連線數量 (與比例衝突時,以此為準)
-        min_eval_clients=2, # 每一輪參與Evaluating的最少Client連線數量 (與比例衝突時,以此為準)
-        min_available_clients=2, # 啟動聯合學習之前，Client連線的最小數量
+        min_eval_clients=1, # 每一輪參與Evaluating的最少Client連線數量 (與比例衝突時,以此為準)
+        min_available_clients=3, # 啟動聯合學習之前，Client連線的最小數量
         
         on_fit_config_fn=fit_config, # 設定 Client-side Training Hyperparameter  
         on_evaluate_config_fn=evaluate_config, # 設定 Client-side Evaluating Hyperparameter
